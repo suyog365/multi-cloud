@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
         - name: hello-app
-          image: my-hello-app:v1
-          imagePullPolicy: Never
+          image: ghcr.io/suyog365/multi-cloud:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
