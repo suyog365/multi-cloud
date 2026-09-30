@@ -1,85 +1,39 @@
-name: Build and Publish Docker Image
+# TwinCluster
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+A multi-cluster Kubernetes deployment platform with automatic failover between two independent clusters.
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+![Architecture Diagram](./architecture.png)
 
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+## What It Does
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+TwinCluster runs the same application on two independent Kubernetes clusters. An nginx router sends traffic to the primary cluster, and if it becomes unhealthy, the router automatically fails over to the secondary cluster within 5 seconds.
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+## Tech Stack
 
-      - name: Build Docker image locally
-        uses: docker/build-push-action@v6
-        with:
-          context: ./app
-          push: false
-          load: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+Docker, Kubernetes, Terraform, GitHub Actions, nginx, Prometheus, Grafana, Trivy, Python/Flask.
 
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: 'CRITICAL'
-          vuln-type: 'os,library'
+## How to Run
 
-      - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+1. Install: Docker, Kind, kubectl, Terraform, Helm
+2. Create clusters: `cd terraform && terraform init && terraform apply`
+3. Deploy to cloud-a: `kubectl config use-context kind-cloud-a && kubectl apply -f k8s/app/deployment-cloud-a.yaml && kubectl apply -f k8s/app/service.yaml`
+4. Deploy to cloud-b: `kubectl config use-context kind-cloud-b && kubectl apply -f k8s/app/deployment-cloud-b.yaml && kubectl apply -f k8s/app/service.yaml`
+5. Deploy router: `kubectl config use-context kind-cloud-a && kubectl apply -f k8s/router/`
+6. Start three port-forwards on ports 9001, 9002, and 8080
+7. Open http://localhost:8080
 
-      - name: Extract metadata (tags, labels)
-        id: meta
-        if: github.event_name != 'pull_request'
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
+## Failover Demo
 
-      - name: Push image to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./app
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+1. Open http://localhost:8080 — shows "Hello from kind-cloud-a!"
+2. Stop the cloud-a port-forward (Ctrl+C)
+3. Refresh the page after 5 seconds
+4. Now shows "Hello from kind-cloud-b!"
 
-      - name: Test the built image
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "Building image locally for testing..."
-          docker build -t test-image:local ./app
-          docker run -d --name test-container -p 8080:8080 -e CLOUD_NAME=github test-image:local
-          sleep 5
-          curl -f http://localhost:8080/health
-          curl -f http://localhost:8080/
-          docker stop test-container
+## Monitoring
+
+Prometheus + Grafana dashboards show live CPU, memory, and network metrics for the application pods.
+
+## Cleanup
+
+    kind delete cluster --name cloud-a
+    kind delete cluster --name cloud-b
